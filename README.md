@@ -12,3 +12,10 @@ Cross-Validation: Employing five-fold cross-validation for model accuracy and re
 Ethical Considerations: Addressing disparities and inconsistencies in data, especially concerning demographic representation.
 
 Our work aims to provide insights into the effectiveness of CoC interventions and to identify critical demographic factors influencing homelessness recurrence. This project not only contributes to urban planning and social welfare discussions but also serves as a call to action for improving support systems for vulnerable populations in Austin.
+
+Repository Contents
+R Markdown file (.Rmd) with detailed analysis.
+Cleaned and processed datasets.
+Visualizations and model outputs.
+A comprehensive report detailing findings and methodologies.
+The project underscores the importance of data-driven approaches in addressing social issues and aids policymakers in developing targeted interventions for reducing homelessness.
