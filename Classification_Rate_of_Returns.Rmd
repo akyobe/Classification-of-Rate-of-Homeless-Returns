@@ -1,0 +1,517 @@
+---
+title: "Classification of the Rate of Return to Homelessness in the Travis County 2017-2021."
+output: html_document
+date: "2023-11-29"
+editor_options: 
+  markdown: 
+    wrap: sentence
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+# City of Austin Project
+
+## Rates of Returns to Homelessness
+
+Introduction: The Travis County Continuum of Care, (CoC) has recently seen the challenges of homelessness as it impacts urban planning and discussion.
+Homelessness has taken center stage in urban planning and social welfare.
+The returns data set sheds light on those individuals who, after obtaining permanent housing, returned to homelessness within a mere span from the recorded years 2017-2021.Each unique row in this dataset represents a specific demographic, i.e., White, disabled, or veteran in a particular fiscal year from 2017 to 2021.
+
+Our motivation for selecting these data sets is the increasing need to understand the efficacy of CoC interventions in addressing homelessness.
+A study by [Alexander-Eitzman, 2013], delved into the complexities surrounding homelessness in urban settings and emphasized the importance of long-term solutions rather than just immediate relief *[1]*.
+The context offered by this previous study magnifies the significance of our data sets, especially as we look at the variables of interest: the rate of return to homelessness and exits from homelessness, the associated factors that might influence these rates such as the specific demographic, and the type of housing before homelessness.
+We anticipate certain demographic patterns that might influence an individual's likelihood of returning to homelessness after a seemingly successful exit.
+We will investigate this by comparing the rates of returns of these specific demographics: race and ethnicity, age, gender, disability status, and veteran status all noted within the span of 2017-2021.
+
+Through our exploratory data analysis, we aim to answer pivotal research questions such as: *What demographic factors correlate with a higher likelihood of returning to homelessness?* *What type of prior housing results in fewer returns to homelessness?* *How do successful returns from homelessness vary across different fiscal years?*
+
+Using our classification and prediction models, we will predict the rate of return to homelessness based on specific demographic, fiscal year, and type of housing before homelessness, and perform a five-fold cross-validation for each model.
+
+```{r global_options, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, eval = TRUE,  
+                      warning = TRUE, message = FALSE, 
+                      fig.align = "center",
+                      R.options = list(max.print=100))
+# Loading Necessary libraries
+# load the ggplot2 library for plot creations
+library(ggplot2)
+library(dplyr)
+library(tidyverse) 
+library(plotROC)
+library(caret)
+library(rpart)
+library(rpart.plot)
+```
+
+**Import the return dataset. Explore the dimensions of the dataset.**
+
+```{r, warning=FALSE}
+# Import return dataset 
+library(readr)
+returns <- read_csv("Strategic_Measure_Number_of_returns_to_homelessness (1).csv") 
+
+# Explore the `returns` dataset 
+str(returns)
+dim(returns)
+```
+
+**Using the recode function inside a mutate, change the names of the labels under the variables `SO/ES/TH/SH/PH`, `Specific Demographic`, and `Demographic Category` to make the variables easily comprehensible. Create a new variable `PriorHousing` with the mutate() function with the recoded names under the `SO/ES/TH/SH/PH` variable. Also using filter(), remove all unknowns.**
+
+```{r}
+returns |>
+  mutate("Specific Demographic" = recode(`Specific Demographic`, "AmIndAKNative" = "American Indian or Alaskan Native", "BlackAfAmerican" = "Black or African American", "Client Doesn't Know or Client Refused" = "Unknown", "NativeHIOtherPacific" = "Native Hawaiian or Other Pacific Islander", "NativeHIPacific" = "Native Hawaiian or Other Pacific Islander", "Gender non-conforming"="Gender Non-Conforming", "Elder Adult 62+"="Adult 62+", "Not a Veteran"="No", "Veteran"="Yes", "Adult under 62"="Adult 25-61", "Elder Adult"="Adult 62+", "Young Adult"="Adult 18-24", "Does Not Have a Disabling Condition"="No", "Has a Disabling Condition"="Yes"))|>
+    mutate(`SO/ES/TH/SH/PH`=recode(`SO/ES/TH/SH/PH`, "Sh"="SH", "So"="SO"))|>
+    mutate(PriorHousing=recode(`SO/ES/TH/SH/PH`, "SO"= "Street Outreach", "ES"= "Emergency Shelter", "TH"= "Transitional Housing", "SH"="Safe Haven", "PH"="Permanent Housing")) |>
+    mutate("Demographic Category" = recode(`Demographic Category`, "Age"="Age Category", "Disability"="Disability Status", "Veteran"="Veteran Status")) |>
+    filter(`Specific Demographic`!="Unknown") -> returns #saved as the same variable to override the first one
+
+#Look at the results of the tyding 
+dim(returns)
+```
+
+**After cleaning the data, there are now 467 observations and 10 variables in the returns data set. Any further attempts to wrangle the data set by pivoting wider or longer would lead to an excessive number of missing values, therefore the data is as tidy as it can be.**
+
+# Results
+
+## Descriptive Statistics
+
+**Grouped by `Demographic Category` and `Specific Category`, found the mean rates and standard deviation for the `returns` data set. Use the arrange function to find the highest rates among the demographics.**
+
+```{r, warning=FALSE}
+#mean and standard deviation return rate per demographic
+returns|>
+  group_by(`Demographic Category`, `Specific Demographic`)|>
+  summarise(mean_rate=mean(Rate,na.rm=T), sd_rate=sd(Rate,na.rm=T))|>
+  arrange(desc(mean_rate))
+```
+
+## Univariate Plots
+
+### Figure 1.1: Univariate Plot of Distribution of Demographic Categories
+
+```{r}
+#bar graph of distribution of demographic categories in `returns` 
+
+returns |>
+  group_by(`Demographic Category`) |>
+  count() |>
+  mutate(count=n) |> 
+  ggplot(aes(x=reorder(`Demographic Category`, -count), y=count)) +
+  geom_bar(stat="identity", aes(fill=`Demographic Category`))+
+  labs(title = "Distribution of Demographic Categories", x = "Demographic Category", caption="data.austintexas.gov", fill = "Demographic Category")
+```
+
+### Figure 1.2: Univariate Plot of Rate of Returns
+
+```{r}
+
+#  histogram of returns to homelessnes
+returns|>
+  ggplot(aes(x=Rate))+
+  geom_histogram(aes(fill="red"), binwidth = .1, center=.05)+ 
+  # the fill color does not represent another variable
+  labs(x="Return Rate", title="Distrubtion of the Rate of Returns to Homelessness", caption="data.austintexas.gov")+ 
+  theme(legend.position = "none")
+```
+
+## Visuals for Returns
+
+### Figure 2.1: Bivariate Plot of Race/Ethnicity and Return Rate
+
+```{r}
+#boxplot of rate of return by race/ethnicity
+returns|>
+   filter(`Demographic Category`=="Race" | `Demographic Category`=="Ethnicity")|>
+  # order the boxplots by highest to lowest median return rate
+  ggplot(aes(y=reorder(`Specific Demographic`, Rate, FUN=median),x=Rate))+
+  geom_boxplot(aes(fill=`Specific Demographic`))+
+  labs(title="Return Rate by Race/Ethnicity", x="Return Rate", y="Race or Ethnicity", caption = "data.austin.gov", fill = "Specific Demographic")
+```
+
+### Figure 2.2: Bivariate Plot of Disability Status and Return Rate
+
+```{r}
+#boxplot of disability status return rate
+returns|>
+   filter(`Demographic Category`=="Disability Status")|>
+  ggplot(aes(y=`Specific Demographic`,x=Rate))+
+  geom_boxplot(aes(fill=`Specific Demographic`))+
+  labs(title="Return Rate by Disability Status (Do they have a disability?)", x="Return Rate", y="Disability Status", caption = "data.austin.gov", fill = "Specific Demographic")
+```
+
+### Figure 2.3: Bivariate Plot of Veteran Status and Return Rate
+
+```{r}
+#boxplot of veteran status return rate
+returns|>
+   filter(`Demographic Category`=="Veteran Status")|>
+  ggplot(aes(y=`Specific Demographic`,x=Rate))+
+  geom_boxplot(aes(fill=`Specific Demographic`))+
+  labs(title="Return Rate by Veteran Status(Are they a veteran?)", x="Return Rate", y="Veteran Status", caption = "data.austin.gov", fill = "Specific Demographic")
+```
+
+### Figure 3.1: Boxplot of Return Rates in each Prior Housing Type
+
+```{r}
+# boxplot visual of return rates per `PriorHousing`
+returns|>
+  group_by(`Demographic Category`, `Specific Demographic`)|>
+  select(`Demographic Category`, `Specific Demographic`, Rate, PriorHousing)|>
+  ggplot()+
+  geom_boxplot(aes(y=Rate,fill=PriorHousing))+
+  facet_wrap(~PriorHousing)+
+  scale_x_discrete() +
+  labs(fill="Prior Housing Type", caption="data.austin.gov", title="Return Rates by Prior Housing Type", y="Return Rate")
+```
+
+### Figure 3.2: Boxplot of Return Rates by Fiscal Year
+
+```{r}
+# Grouped boxplot of the return rate by fiscal year
+returns|>
+  ggplot(aes(x=as.factor(`Fiscal Year`),y=Rate))+
+  geom_boxplot(aes(fill=as.factor(`Fiscal Year`)))+
+  labs(title="Return Rates by Fiscal Year", x="Fiscal Year", y="Return Rate", caption = "data.austin.gov", fill="Fiscal Year")
+```
+
+# Classification and Prediction
+
+## Linear Regression
+
+### Fitting the Model
+
+```{r}
+# Using a linear regression model
+
+fit_reg <- lm(Rate ~ `Specific Demographic`+ as.factor(`Fiscal Year`)+ PriorHousing,
+                     data = returns) 
+
+#evaluate the performance of the model with RMSE
+sqrt(mean((returns$Rate - predict(fit_reg, returns))^2))# 0.1518255
+
+#look at significant variables
+summary(fit_reg)
+#significant variables: gender non-conforming,lived in permanent housing, transitional housing, safe haven (lower returns)
+#higher returns significant: adults 25-61 
+```
+
+### Cross-validation
+
+```{r}
+# Choose number of folds
+k=5
+
+# Randomly order rows in the dataset
+data <- returns[sample(nrow(returns)), ] 
+
+# Create k folds from the dataset
+folds <- cut(seq(1:nrow(data)), breaks = k, labels = FALSE)
+
+```
+
+**Use a for loop to repeat the process for each fold**
+
+```{r, warning=FALSE}
+# Initialize a vector to keep track of the performance for each k-fold
+
+perf_k <- NULL
+
+# Use a for-loop to get performance for each k-fold
+for(i in 1:k){
+  # Split data into train and test data
+  train_not_i_1 <- data[folds != i, ] # train data = all observations except in fold i
+  test_i_1 <- data[folds == i, ]  # test data = observations in fold i
+  
+  # Train model on train data (all but fold i)
+  train_model_1 <-lm(Rate ~ PriorHousing+`Specific Demographic`+as.factor(`Fiscal Year`), data = train_not_i_1)
+  
+  
+  # Performance listed for each test data = fold i
+  perf_k[i] <- sqrt(mean((test_i_1$Rate - predict(train_model_1, newdata = test_i_1))^2, 
+    na.rm = TRUE))
+}
+```
+
+**Evaluate the performance on each fold and find the average performance:**
+
+```{r}
+# Performance for each fold 
+perf_k
+
+# Average performance over all k folds and variation
+mean(perf_k)
+sd(perf_k)
+
+#MEAN: 0.1598246
+#SD: 0.03549817
+```
+
+## Logistic Regression
+
+For the logistic regression analysis, Anna first defined a cutoff threshold to transform the return.rate into a binary outcome (HighRisk).
+The threshold is the value .2221.
+The reasoning for this value is an approximation of the average of the return.rate of the dataset.
+Ideally in a perfect approach this value would be .5.
+However, due to the sensitivity of the model, the outcome's performance (AUC) .5 was not acurate and generated values lower than 50%.
+This transformation is key in logistic regression, which is designed for binary outcome variables.
+After adding a HighRisk as a binary variable to the dataframe and ensured other predictor variables were converted to factors, preparing them for inclusion in the logistic regression model.
+Anna was able to use the glm() function with a binomial family, and then created a logistic regression model to analyze the relationship between HighRisk and predictors like PriorHousing, Specific Demographic, and Fiscal Year.
+To test the performance the ROC (Receiver Operating Characteristic) curve and AUC (Area Under the Curve) values were calculated.
+
+The ROC curve is created by plotting the true positive rate (TPR, or sensitivity) against the false positive rate (FPR, or 1-specificity) at various threshold settings.The curve provides a visual tool to assess the model's performance.
+A curve closer to the top-left corner indicates a better performance, with an area under the curve (AUC) close to 1.
+The AUC represents the degree or measure of separability, indicating how well the model can distinguish between classes.
+For our dataset the AUC value is .8496842.
+
+### Fitting the Model
+
+```{r}
+# Define a cutoff for the binary outcome of rate of returns
+cutoff <- 0.2221  # This is just an example threshold
+
+high_risk_values <- ifelse(returns$`Rate` > cutoff, 1, 0)
+#add high risk values to returns
+returns <- returns |>
+  mutate(HighRisk = as.factor(high_risk_values))
+
+# Now, ensure that other predictor variables are also factors
+returns |>
+  mutate(PriorHousing = as.factor(PriorHousing),
+         SpecificDemographic= as.factor(`Specific Demographic`),
+         Fiscal.Year = as.factor(`Fiscal Year`))
+
+# Perform the logistic regression
+model <- glm(HighRisk ~ PriorHousing +`Specific Demographic`+ `Fiscal Year`, 
+             data = returns, family = binomial())
+summary(model)
+```
+
+Evalute the performance with ROC curve and AUC
+
+```{r}
+ROC <- returns |>
+  mutate(prediction = predict(model, type = "response")) |>
+  mutate(HighRisk_numeric = as.numeric(as.character(HighRisk)))
+
+ROC_plot <- ggplot(ROC, aes(d = HighRisk_numeric, m = prediction)) + 
+  geom_roc(n.cuts = 20) +
+  style_roc()
+auc_value <- calc_auc(ROC_plot)$AUC
+auc_value
+ROC_plot
+```
+
+### Cross Validation:
+
+This performs k-fold cross-validation on the `Returns` dataset, I initially encountered challenges with generating non-empty `perf_k` values in the vector, using the example code provided in class worksheets.
+To address this issue, I referred to external resources for guidance to generate the right AUC values.
+The article "How to Calculate AUC in R studio" from [GeeksforGeeks](https://www.geeksforgeeks.org/how-to-calculate-auc-area-under-curve-in-r/) provided a comprehensive step-by-step documentation on implementing the "pROC" library, which was essential for this analysis.
+To better the understand the roc object from the pROC library and accurately calculate the AUC for each iteration of k-fold cross-validation, I used Renesh Bedre's blog post, Calculate AUC in R:Step-by-Step Guide With Example available at [Renesh Bedre's blog](https://reneshbedre.com/blog/calculate-auc-in-r.html).
+These insights were crucial in effectively utilizing the for-loop and setup code from our class's Worksheet 18 on cross-validation for a classification model.
+
+```{r, warning=FALSE}
+#install.packages("pROC")
+library(pROC)
+set.seed(123)
+data <- returns[sample(nrow(returns)), ]
+
+# Create indices for k folds
+k <- 5
+folds <- cut(seq(1, nrow(data)), breaks = k, labels = FALSE)
+
+# Initialize a vector to keep track of the performance for each k-fold
+perf_k <- numeric(k)
+
+# Use a for-loop to get performance for each k-fold
+for(i in 1:k){
+  # Split data into train and test data
+  train_not_i <- data[folds != i, ] # train data = all observations except in fold i
+  test_i <- data[folds == i, ]  # test data = observations in fold i
+  
+  # Train model on train data (all but fold i)
+  train_model <- glm(HighRisk ~ PriorHousing + `Specific Demographic` + `Fiscal Year`,
+                     data = train_not_i,
+                     family = "binomial")
+  
+  # Predict on test data
+  predictions <- predict(train_model, newdata = test_i, type = "response")
+
+  # Calculate ROC and AUC
+  roc_obj <- roc(test_i$HighRisk, predictions)
+  perf_k[i] <- auc(roc_obj)
+}
+
+# Performance for each fold 
+perf_k
+
+# find the average of the perf_k values 
+mean(perf_k)
+
+```
+
+## Decision Tree
+
+### Fitting the Model
+
+Fit a decision tree model to the `returns` dataset with `PriorHousing` and `Specific Demographic` as the predictiors for `Rate` (return rate).
+Create a visualization of the decision tree model.
+
+```{r}
+#Consider the decision tree model
+fit_tree_return <- rpart(Rate ~ PriorHousing + `Specific Demographic`,
+                    data = returns)
+
+# Visualize the decision tree
+rpart.plot(fit_tree_return)
+```
+
+Evaluate the performance of the decision tree model.
+
+```{r}
+# Evaluate performance with RMSE
+sqrt(mean((returns$Rate - predict(fit_tree_return, returns))^2))
+```
+
+**Fitting the decision tree model to the entire `returns` dataset results in an RMSE of 0.145. The RMSE value tells us that the average residuals are pretty low, which tells us that the decision tree model predicts new observations pretty well.**
+
+### Cross-validation
+
+Perform a 5-fold cross-validation with the decision tree model.
+Calculate and report the average performance of the decision tree model across the 5 folds.
+
+```{r, warning=FALSE}
+# Choose number of folds
+k = 5 
+
+# Randomly shuffle the data
+set.seed(123)
+# Randomly order rows in the dataset
+data <- returns[sample(nrow(returns)), ] 
+
+# Create k folds from the dataset
+folds <- cut(seq(1:nrow(data)), breaks = k, labels = FALSE)
+
+# Initialize a vector to keep track of the performance for each k-fold
+perf_k <- NULL
+
+# Use a for-loop to get performance for each k-fold
+for(i in 1:k){
+  # Split data into train and test data
+  train_not_i2 <- data[folds != i, ] # train data = all observations except in fold i
+  test_i2 <- data[folds == i, ]  # test data = observations in fold i
+  
+  # Train model on train data (all but fold i)
+  train_model <- rpart(Rate ~ PriorHousing +`Specific Demographic`,
+                    data = train_not_i2)
+  
+  # Performance listed for each test data = fold i
+  perf_k[i] <- sqrt(mean((
+    test_i2$Rate - predict(train_model, newdata = test_i2))^2, 
+    na.rm = TRUE))
+}
+
+# Average performance over all k folds and variation
+mean(perf_k)
+sd(perf_k)
+
+# Performance for each fold 
+perf_k
+
+
+```
+```{r} 
+library(ggplot2)
+library(dplyr)
+
+# Sample data creation for demonstration purposes (replace this with your actual data)
+set.seed(123)  # for reproducibility
+returns <- data.frame(
+  Rate = runif(100, 0, 1),  # Replace with actual rate data
+  `Demographic Category` = sample(c('Race', 'Veteran Status', 'Disability Status'), 100, replace = TRUE),
+  `Specific Demographic` = sample(c('White', 'Black or African American', 'Asian', 'Veteran', 'Non-Veteran', 'Disabled', 'Non-Disabled'), 100, replace = TRUE)
+)
+
+# Filter for specific demographic categories of interest
+filtered_data <- returns %>% 
+  filter(`Demographic.Category` %in% c('Race', 'Veteran Status', 'Disability Status'))
+
+
+ggplot(filtered_data, aes(x = `Specific.Demographic`, y = Rate)) +
+  geom_point(aes(color = `Demographic.Category`), alpha = 0.6) +
+  facet_wrap(~ `Demographic.Category`) +
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1)) +
+  labs(title = 'Rate of Return to Homelessness by Demographic Categories',
+       x = 'Specific Demographic', y = 'Rate of Return to Homelessness')
+
+ggplot(filtered_data, aes(x = `Specific.Demographic`, y = Rate, color = `Demographic.Category`)) +
+  geom_jitter(alpha = 0.6, width = 0.2, height = 0) +
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1)) +
+  labs(title = 'Rate of Return to Homelessness by Demographic Categories',
+       x = 'Specific Demographic', y = 'Rate of Return to Homelessness')
+
+``` 
+```{r}
+# Visualize the decision tree for regression
+rpart.plot(fit_tree_return, 
+           type = 0,  # Sets the type of plot
+           extra = 1,  # Displays the number of observations in the node
+           under = TRUE,  # Plots the number of observations under the branch
+           cex = 0.6,  # Character expansion size for text
+           tweak = 1.2  # Tweaks the size of the nodes relative to the default
+           )  # Color nodes based on the fall prediction
+
+```
+**The average RMSE over all k folds for the decision tree model is 0.162, and it varies by 0.030. The standard deviation is small enough to rule out overfitting since there was little variation in the performance of the model on the test data set as shown by the 5-fold cross-validation.**
+
+## Comparing the Models
+
+# Discussion
+
+After calculating the mean of return rates to homelessness per specific demographic, we found that subjects that were "two or more races" (mean = 0.25000), were veterans (mean = 0.24200), and had a disability (mean = 0.24120) saw the highest mean return rates.
+In contrast, American Indian or Alaskan Natives, Native Hawaiian or Other Pacific Islanders, and Asians had the lowest mean return rates, at 0.09318, 0.04578, and 0.03800, respectively.
+These results are consistent when we look at the median return rates for each specific demographic in Figures 2.1-2.3.
+This helps us conclude that factors such as being a veteran or having a disability can have a greater impact on a person's likelihood of returning back to homelessness than ethnicity or race.
+
+Based on the performance values for each of our models, prior housing appears to be a good predictor for the rate of returns to homelessness.
+The negative coefficients of prior housing in the linear model indicate that they decrease the return rate.
+Street outreach had the highest median rate of return to homelessness, while "Safe Haven" had the lowest median rate of return to homeless.
+These results show that people who exit homelessness and reside in a safe haven afterwards have a lower likelihood of becoming homeless once again.
+
+To answer our final research question we looked at Figure 3.2 and the linear regression model.
+Based on Figure 4.2, we see an overall increasing trend in the median successful return rate between 2017 and 2021.
+Using the linear regression model, we see that all fiscal years significantly increase the return rate, but 2020 had the highest coefficient.
+The linear regression's result is consistent with Figure 3.2 since 2020 also had the highest median return rate.
+
+There are some ethical issues that arose in our explanatory analysis.
+Certain demographics, such as "Two or More Races" do not have exit or return rates recorded for some or most fiscal years.
+Additionally, there is not an equal total number of subjects for each demographic, and there are confounding variables (mental health, resources, etc..) that differ from case to case.
+Regarding the original dataset from the City of Austin, the coding for `Demographic Category` and `Specific Demographic` are inconsistent (multiple spellings for the same variable), which we recoded and renamed for the purposes of our project.
+
+We expected to see veteran status to be more influential on a return to homelessness than other demographics.
+However, we also believed race would have a greater impact on these rates, but our results showed that disability status affected return rates more.
+These results bring to the forefront Austin's available support for veterans and the disabled.
+It would be interesting to continue analyzing the specific reasons why veterans and those with disabilities returned to homelessness.
+Was it a lack of effective city-funded programs?
+Was it health issues that made it harder to become self-sustaining?
+These could be questions that we would further look into to expand our research and analysis.
+
+# References and Acknowledgements
+
+**We extend our thanks to the City of Austin and the individuals involved in the open data that we utilized in this exploratory project. To our professor, Dr. Guyot, we appreciate your organizing this collaboration as well as your assistance during the data cleaning. Through this exploratory data analysis, we have learned to better organize our R code in a manner that would be easy to understand for someone who didn't write the code. In addition, we have also learned the value of feedback from teammates to create the best and most concise end result. After this project, we are eager to wrangle and analyze more real-world data sets.**
+
+##### Data sets Referenced:
+
+-   **Returns :** Texas, A. (2020, March 2). Strategic Measure_Number of returns to homelessness. Austintexas.gov. <https://data.austintexas.gov/Health-and-Community-Services/Strategic-Measure_Number-of-returns-to-homelessnes/jy3f-9rpf>
+
+##### Websites Referenced:
+
+- **GeeksforGeeks: How to Calculate AUC (Area Under Curve) in R** (n.d.).
+How to Calculate AUC (Area Under Curve) in R?
+GeeksforGeeks.com.
+<https://www.geeksforgeeks.org/how-to-calculate-auc-area-under-curve-in-r/>
+
+- **RS Blog:Calculate AUC in R:** Bedre,Renesh. (2021, April 7). Calculate AUC in R: Step-by-Step Guide with Example. R Studio Blog.<https://www.reneshbedre.com/blog/calculate-auc-in-r.html>
